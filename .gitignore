@@ -1,0 +1,11 @@
+.idea
+
+test_snapshots
+
+# Rust's output directory
+target
+
+# Local settings
+.soroban
+.stellar
+off-chain/node_modules
