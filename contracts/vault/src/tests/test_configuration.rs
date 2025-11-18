@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::contract::VaultContract;
-use crate::storage::core::{admin, deposit_asset, escrow, paused};
+use crate::storage::core::{admin, deposit_asset, paused};
 use crate::tests::test_utils::{create_test_data, TestData};
 use soroban_sdk::testutils::{Address as _, Events, MockAuth, MockAuthInvoke};
 use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal};
@@ -10,14 +10,12 @@ use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal};
 pub fn test_constructor() {
     let e: Env = Env::default();
     let new_admin: Address = Address::generate(&e);
-    let new_escrow: Address = Address::generate(&e);
     let new_deposit_asset: Address = Address::generate(&e);
 
-    let contract_id: Address = e.register(VaultContract, (new_admin.clone(), new_deposit_asset.clone(), new_escrow.clone()));
+    let contract_id: Address = e.register(VaultContract, (new_admin.clone(), new_deposit_asset.clone()));
 
     e.as_contract(&contract_id, || {
         assert_eq!(new_admin, admin(&e, None).unwrap());
-        assert_eq!(new_escrow, escrow(&e, None).unwrap());
         assert_eq!(new_deposit_asset, deposit_asset(&e, None).unwrap());
         assert_eq!(false, paused(&e, None).unwrap());
     });

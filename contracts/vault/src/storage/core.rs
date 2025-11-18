@@ -6,7 +6,6 @@ pub enum CoreStorageKeys {
     Admin,        // --> Address
     DepositAsset, // --> Address
     Paused,       // --> bool
-    Escrow,       // --> Address
 }
 
 pub fn admin(e: &Env, value: Option<Address>) -> Option<Address> {
@@ -23,14 +22,6 @@ pub fn deposit_asset(e: &Env, value: Option<Address>) -> Option<Address> {
     }
 
     e.storage().instance().get(&CoreStorageKeys::DepositAsset)
-}
-
-pub fn escrow(e: &Env, value: Option<Address>) -> Option<Address> {
-    if let Some(v) = value {
-        e.storage().instance().set(&CoreStorageKeys::Escrow, &v);
-    }
-
-    e.storage().instance().get(&CoreStorageKeys::Escrow)
 }
 
 pub fn paused(e: &Env, value: Option<bool>) -> Option<bool> {

@@ -1,7 +1,6 @@
 #![cfg(test)]
 
 use crate::contract::{VaultContract, VaultContractClient};
-use escrow::contract::EscrowContract;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 use soroban_sdk::{Address, Env};
@@ -18,9 +17,7 @@ pub fn create_test_data(e: &Env) -> TestData {
     let admin: Address = Address::generate(&e);
     let deposit_asset: Address = e.register_stellar_asset_contract_v2(admin.clone()).address();
 
-    let escrow: Address = e.register(EscrowContract, (admin.clone(),));
-
-    let contract_id: Address = e.register(VaultContract, (admin.clone(), deposit_asset.clone(), escrow.clone()));
+    let contract_id: Address = e.register(VaultContract, (admin.clone(), deposit_asset.clone()));
 
     let contract: VaultContractClient = VaultContractClient::new(&e, &contract_id);
 

@@ -1,7 +1,7 @@
 use crate::deposit::handle_deposit;
 use crate::errors::ContractErrors;
 use crate::events::{ContractAdminEvent, ContractStatusEvent, WithdrawEvent};
-use crate::storage::core::{admin, bump_instance, deposit_asset, escrow, paused};
+use crate::storage::core::{admin, bump_instance, deposit_asset, paused};
 use crate::storage::deposit_state::{deposit, reduce_total_principal, DepositRecord};
 use crate::utils::withdraw_deposit_asset;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
@@ -10,7 +10,7 @@ pub trait VaultContractTrait {
     /// arguments:
     /// * new_admin: The admin of the contract
     /// * new_deposit_asset: The asset users will deposit into the vault
-    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address, new_escrow: Address);
+    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address);
 
     // ---------------------------------------
     // ------------ Admin methods ------------
@@ -30,11 +30,6 @@ pub trait VaultContractTrait {
     fn deposit(e: Env, from: Address, amount: u128) -> u64;
 
     /// Withdraws the funds from the user's deposits
-    ///
-    /// # Returns
-    /// A vector with tuples with the structure:
-    /// * Deposit ID
-    /// * Deposit asset withdrew
     fn withdraw(e: Env, from: Address, amount: u128) -> Result<(), ContractErrors>;
 }
 
@@ -43,10 +38,9 @@ pub struct VaultContract;
 
 #[contractimpl]
 impl VaultContractTrait for VaultContract {
-    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address, new_escrow: Address) {
+    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address) {
         admin(&e, Some(new_admin));
         deposit_asset(&e, Some(new_deposit_asset));
-        escrow(&e, Some(new_escrow));
         paused(&e, Some(false));
     }
 
