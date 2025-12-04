@@ -10,7 +10,7 @@ use crate::tests::test_utils::{create_test_data, TestData};
 use alloc::vec::Vec as StdVec;
 use soroban_sdk::testutils::{Address as _, Events};
 use soroban_sdk::token;
-use soroban_sdk::{symbol_short, Address, Env, Map, Symbol, TryFromVal, Vec as SorobanVec};
+use soroban_sdk::{symbol_short, Address, Env, Map, String, Symbol, TryFromVal, Vec as SorobanVec};
 
 #[test]
 fn deposit_successful_flow() {
@@ -29,7 +29,7 @@ fn deposit_successful_flow() {
     mint_client.mint(&user, &(amount as i128));
     let _ = e.events().all();
 
-    let deposit_id = contract.deposit(&user, &amount);
+    let deposit_id = contract.deposit(&user, &amount, &None);
 
     let events_after_deposit = e.events().all();
 
@@ -68,6 +68,9 @@ fn deposit_successful_flow() {
     assert_eq!(event_owner, user);
     assert_eq!(event_amount, amount);
     assert_eq!(event_started, started_at);
+    let event_referral_id: Option<String> =
+        Option::<String>::try_from_val(&e, &data_map.get_unchecked(Symbol::new(&e, "referral_id"))).unwrap();
+    assert_eq!(event_referral_id, Option::<String>::None);
 }
 
 #[test]
@@ -90,6 +93,40 @@ fn deposit_rejects_when_paused() {
         crate::storage::core::paused(&e, Some(true));
     });
 
-    let vault_paused_error = contract.try_deposit(&user, &amount).unwrap_err().unwrap();
+    let vault_paused_error = contract.try_deposit(&user, &amount, &None).unwrap_err().unwrap();
     assert_eq!(vault_paused_error, ContractErrors::VaultPaused.into());
+}
+
+#[test]
+fn deposit_emits_referral_id_when_present() {
+    let e: Env = Env::default();
+    e.mock_all_auths();
+
+    let test_data: TestData = create_test_data(&e);
+    let contract: VaultContractClient = test_data.contract;
+    let deposit_asset: Address = test_data.deposit_asset;
+
+    let user = Address::generate(&e);
+    let amount: u128 = 250 * SCALAR_7;
+    let referral_id: Option<String> = Some(String::from_str(&e, "ref-42"));
+
+    let mint_client = token::StellarAssetClient::new(&e, &deposit_asset);
+    mint_client.mint(&user, &(amount as i128));
+    let _ = e.events().all();
+
+    let deposit_id = contract.deposit(&user, &amount, &referral_id);
+    let events_after_deposit = e.events().all();
+
+    let native_events: StdVec<_> = events_after_deposit.into_iter().collect();
+    assert!(!native_events.is_empty());
+
+    let (_, _, data_val) = native_events.last().unwrap();
+    let data_map: Map<Symbol, soroban_sdk::Val> = Map::try_from_val(&e, data_val).unwrap();
+
+    let event_deposit_id: u64 = u64::try_from_val(&e, &data_map.get_unchecked(Symbol::new(&e, "deposit_id"))).unwrap();
+    let event_referral_id: Option<String> =
+        Option::<String>::try_from_val(&e, &data_map.get_unchecked(Symbol::new(&e, "referral_id"))).unwrap();
+
+    assert_eq!(event_deposit_id, deposit_id);
+    assert_eq!(event_referral_id, referral_id);
 }

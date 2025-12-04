@@ -3,9 +3,9 @@ use crate::events::DepositEvent;
 use crate::storage::core::{bump_instance, deposit_asset, paused};
 use crate::storage::deposit_state::{add_total_principal, consume_next_deposit_id, deposit, DepositRecord};
 use soroban_sdk::token::TokenClient;
-use soroban_sdk::{panic_with_error, token, Address, Env};
+use soroban_sdk::{panic_with_error, token, Address, Env, String};
 
-pub fn handle_deposit(e: &Env, from: Address, amount: u128) -> u64 {
+pub fn handle_deposit(e: &Env, from: Address, amount: u128, referral_id: Option<String>) -> u64 {
     if paused(e, None).unwrap_or(false) {
         panic_with_error!(e, ContractErrors::VaultPaused);
     }
@@ -38,6 +38,7 @@ pub fn handle_deposit(e: &Env, from: Address, amount: u128) -> u64 {
         owner: from,
         amount,
         started_at,
+        referral_id,
     }
     .publish(&e);
 

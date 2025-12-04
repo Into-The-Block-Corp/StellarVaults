@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address};
+use soroban_sdk::{contractevent, Address, String};
 
 #[contractevent(topics = ["ADMIN", "update"], data_format = "single-value")]
 pub struct ContractAdminEvent {
@@ -16,13 +16,7 @@ pub struct DepositEvent {
     pub owner: Address,
     pub amount: u128,
     pub started_at: u64,
-}
-
-#[contractevent(topics = ["DEPOSIT", "withdraw"])]
-pub struct WithdrawDepositEvent {
-    pub deposit_id: u64,
-    pub owner: Address,
-    pub amount: u128,
+    pub referral_id: Option<String>,
 }
 
 #[contractevent(topics = ["WITHDRAW", "total"])]

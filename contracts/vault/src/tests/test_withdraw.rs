@@ -15,7 +15,7 @@ pub fn test_simple_withdraw() {
     let depositor: Address = Address::generate(&e);
     let amount: u128 = 100 * SCALAR_7;
     test_data.deposit_asset_sac.mock_all_auths().mint(&depositor, &(amount as i128));
-    test_data.contract.mock_all_auths().deposit(&depositor, &amount);
+    test_data.contract.mock_all_auths().deposit(&depositor, &amount, &None);
 
     assert!(test_data.contract.try_withdraw(&depositor, &amount).is_err());
 
@@ -56,7 +56,7 @@ pub fn test_multiple_withdraws() {
 
     for _ in 0..4 {
         test_data.deposit_asset_sac.mock_all_auths().mint(&depositor, &(amount as i128));
-        test_data.contract.mock_all_auths().deposit(&depositor, &amount);
+        test_data.contract.mock_all_auths().deposit(&depositor, &amount, &None);
     }
 
     assert_eq!(test_data.deposit_asset_tc.balance(&depositor), 0);
@@ -97,7 +97,7 @@ pub fn test_withdraw_errors() {
 
     for _ in 0..3 {
         test_data.deposit_asset_sac.mock_all_auths().mint(&depositor, &(amount as i128));
-        test_data.contract.mock_all_auths().deposit(&depositor, &amount);
+        test_data.contract.mock_all_auths().deposit(&depositor, &amount, &None);
     }
 
     assert_eq!(

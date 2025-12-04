@@ -4,7 +4,7 @@ use crate::events::{ContractAdminEvent, ContractStatusEvent, WithdrawEvent};
 use crate::storage::core::{admin, bump_instance, deposit_asset, paused};
 use crate::storage::deposit_state::{deposit, reduce_total_principal, DepositRecord};
 use crate::utils::withdraw_deposit_asset;
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
 
 pub trait VaultContractTrait {
     /// arguments:
@@ -27,7 +27,8 @@ pub trait VaultContractTrait {
     fn set_status(e: Env, new_status: bool);
 
     /// Deposits assets into the vault on behalf of `from`, returning the new deposit identifier.
-    fn deposit(e: Env, from: Address, amount: u128) -> u64;
+    /// * referral_id: Optional referral identifier emitted with the deposit event.
+    fn deposit(e: Env, from: Address, amount: u128, referral_id: Option<String>) -> u64;
 
     /// Withdraws the funds from the user's deposits
     fn withdraw(e: Env, from: Address, amount: u128) -> Result<(), ContractErrors>;
@@ -66,8 +67,8 @@ impl VaultContractTrait for VaultContract {
         ContractStatusEvent { paused: new_status }.publish(&e);
     }
 
-    fn deposit(e: Env, from: Address, amount: u128) -> u64 {
-        handle_deposit(&e, from, amount)
+    fn deposit(e: Env, from: Address, amount: u128, referral_id: Option<String>) -> u64 {
+        handle_deposit(&e, from, amount, referral_id)
     }
 
     fn withdraw(e: Env, from: Address, amount: u128) -> Result<(), ContractErrors> {
