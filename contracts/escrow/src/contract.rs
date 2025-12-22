@@ -72,7 +72,11 @@ impl EscrowContractTrait for EscrowContract {
         for (asset, amount) in actions {
             let client: token::TokenClient = token::TokenClient::new(&e, &asset);
             let balance: i128 = client.balance(&e.current_contract_address());
-            client.transfer(&e.current_contract_address(), &admin, &(balance - (amount as i128)));
+            client.transfer(
+                &e.current_contract_address(),
+                &admin,
+                &(balance - i128::try_from(amount).map_err(|_| ContractErrors::RewardAmountTooLarge).unwrap()),
+            );
         }
         bump_instance(&e);
     }

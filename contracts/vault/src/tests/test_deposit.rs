@@ -8,9 +8,9 @@ use crate::errors::ContractErrors;
 use crate::storage::deposit_state::{deposit, total_principal, DepositRecord};
 use crate::tests::test_utils::{create_test_data, TestData};
 use alloc::vec::Vec as StdVec;
-use soroban_sdk::testutils::{Address as _, Events};
-use soroban_sdk::token;
+use soroban_sdk::testutils::{Address as _, Events, MockAuth, MockAuthInvoke};
 use soroban_sdk::{symbol_short, Address, Env, Map, String, Symbol, TryFromVal, Vec as SorobanVec};
+use soroban_sdk::{token, IntoVal};
 
 #[test]
 fn deposit_successful_flow() {
@@ -129,4 +129,47 @@ fn deposit_emits_referral_id_when_present() {
 
     assert_eq!(event_deposit_id, deposit_id);
     assert_eq!(event_referral_id, referral_id);
+}
+
+#[test]
+fn test_expected_deposit_errors() {
+    let e: Env = Env::default();
+    let test_data: TestData = create_test_data(&e);
+
+    let depositor: Address = Address::generate(&e);
+
+    // Should fail if the depositor has no funds
+    assert!(test_data
+        .contract
+        .mock_all_auths()
+        .try_deposit(&depositor, &SCALAR_7, &None)
+        .is_err());
+
+    // We transfer funds so we are sure next errors aren't because of lack of funds
+    test_data.deposit_asset_sac.mock_all_auths().mint(&depositor, &(SCALAR_7 as i128));
+
+    // Should fail if the transaction is not signed by the depositor
+    assert!(test_data.contract.try_deposit(&depositor, &SCALAR_7, &None).is_err());
+
+    // If the deposit is zero it will fail
+    assert!(test_data.contract.try_deposit(&depositor, &0, &None).is_err());
+
+    // This one will finally pass
+    test_data
+        .contract
+        .mock_auths(&[MockAuth {
+            address: &depositor,
+            invoke: &MockAuthInvoke {
+                contract: &test_data.contract.address,
+                fn_name: "deposit",
+                args: (depositor.clone(), SCALAR_7.clone(), None::<String>).into_val(&e),
+                sub_invokes: &[MockAuthInvoke {
+                    contract: &test_data.deposit_asset,
+                    fn_name: "transfer",
+                    args: (depositor.clone(), test_data.contract.address.clone(), SCALAR_7 as i128).into_val(&e),
+                    sub_invokes: &[],
+                }],
+            },
+        }])
+        .deposit(&depositor, &SCALAR_7, &None);
 }

@@ -110,3 +110,28 @@ pub fn test_withdraw_errors() {
         ContractErrors::NotEnoughDeposit,
     );
 }
+
+#[test]
+pub fn test_funds_stolen_withdraw_fails() {
+    let e: Env = Env::default();
+    e.mock_all_auths();
+    let test_data: TestData = create_test_data(&e);
+    let depositor: Address = Address::generate(&e);
+
+    test_data.deposit_asset_sac.mock_all_auths().mint(&depositor, &(500 as i128));
+    test_data.contract.deposit(&depositor, &500, &None);
+
+    test_data
+        .deposit_asset_tc
+        .transfer(&test_data.contract.address, &Address::generate(&e), &500);
+
+    assert_eq!(
+        test_data
+            .contract
+            .mock_all_auths()
+            .try_withdraw(&depositor, &500)
+            .unwrap_err()
+            .unwrap(),
+        ContractErrors::WithdrawDepositAssetFailed,
+    );
+}

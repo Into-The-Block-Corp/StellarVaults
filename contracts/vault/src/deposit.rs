@@ -16,7 +16,11 @@ pub fn handle_deposit(e: &Env, from: Address, amount: u128, referral_id: Option<
 
     let token_client: TokenClient = token::Client::new(e, &deposit_asset_address);
     let contract_address: Address = e.current_contract_address();
-    token_client.transfer(&from, &contract_address, &(amount as i128));
+    token_client.transfer(
+        &from,
+        &contract_address,
+        &i128::try_from(amount).map_err(|_| ContractErrors::RewardAmountTooLarge).unwrap(),
+    );
 
     let started_at: u64 = e.ledger().timestamp();
     let deposit_id: u64 = consume_next_deposit_id(e);

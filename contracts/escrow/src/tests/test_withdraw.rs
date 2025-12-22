@@ -66,3 +66,23 @@ fn test_withdraw() {
 
     assert_eq!(test_data.token_b_tc.balance(&test_data.admin), (amount_to_allow / 2) as i128);
 }
+
+#[test]
+fn test_unrealistic_withdraw_overflow() {
+    let e: Env = Env::default();
+    e.mock_all_auths();
+    let test_data: TestData = create_test_data(&e);
+
+    test_data.token_a_sac.mock_all_auths().mint(&test_data.contract.address, &i128::MAX);
+    test_data.token_b_sac.mock_all_auths().mint(&test_data.contract.address, &i128::MAX);
+
+    // This will fail, not because an i128 overflow but because we are trying to subtract more than assets can even hold
+    assert!(test_data
+        .contract
+        .try_withdraw(&vec![
+            &e,
+            (test_data.token_a.clone(), u128::MAX),
+            (test_data.token_b.clone(), u128::MAX),
+        ])
+        .is_err());
+}

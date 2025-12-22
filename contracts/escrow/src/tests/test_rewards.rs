@@ -4,9 +4,10 @@ use crate::constants::SCALAR_7;
 use crate::contract::ClaimParams;
 use crate::errors::ContractErrors;
 use crate::rewards::{compute_leaf_hash, compute_root_from_proof};
-use crate::storage::{get_reward_epoch, is_claimed};
+use crate::storage::{get_reward_epoch, is_claimed, put_reward_epoch, set_latest_epoch, RewardEpoch};
 use crate::tests::test_utils::{create_test_data, TestData};
 use hex;
+use soroban_sdk::testutils::Ledger;
 use soroban_sdk::{testutils::Address as _, vec, Address, BytesN, Env, Vec};
 
 fn seed_escrow(test_data: &TestData, amount: u128) {
@@ -115,6 +116,86 @@ pub fn test_set_rewards_root_requires_mature_program() {
 
     let claim_err = test_data.contract.mock_all_auths().try_claim(&user, &vault, &epoch, &claim_attempt);
     assert_eq!(claim_err.unwrap_err().unwrap(), ContractErrors::RewardEpochNotFound);
+}
+
+#[test]
+pub fn test_reward_epoch_out_of_order() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let test_data: TestData = create_test_data(&e);
+    e.ledger().set_timestamp(2);
+
+    let user: Address = Address::generate(&e);
+    let vault: Address = test_data.vault_a.clone();
+    let deposit_id: u64 = 1;
+    let epoch: u32 = 1;
+    let reward_amount: u128 = 50 * SCALAR_7;
+    let root: BytesN<32> = compute_leaf_hash(&e, &vault, epoch, deposit_id, &user, reward_amount);
+    let program_end_ts: u64 = 1;
+
+    seed_escrow(&test_data, reward_amount);
+
+    test_data
+        .contract
+        .set_rewards_root(&test_data.token_a, &vault, &epoch, &root, &reward_amount, &1u32, &program_end_ts);
+
+    let error = test_data
+        .contract
+        .try_set_rewards_root(&test_data.token_a, &vault, &0, &root, &reward_amount, &1u32, &program_end_ts)
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(error, ContractErrors::RewardEpochOutOfOrder);
+}
+
+#[test]
+pub fn test_insufficient_escrow_balance() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let test_data: TestData = create_test_data(&e);
+    e.ledger().set_timestamp(2);
+
+    let user: Address = Address::generate(&e);
+    let vault: Address = test_data.vault_a.clone();
+    let deposit_id: u64 = 1;
+    let epoch: u32 = 1;
+    let reward_amount: u128 = 50 * SCALAR_7;
+    let root: BytesN<32> = compute_leaf_hash(&e, &vault, epoch, deposit_id, &user, reward_amount);
+    let program_end_ts: u64 = 1;
+
+    let error = test_data
+        .contract
+        .try_set_rewards_root(&test_data.token_a, &vault, &epoch, &root, &reward_amount, &1u32, &program_end_ts)
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(error, ContractErrors::InsufficientEscrowBalance);
+}
+
+#[test]
+pub fn test_unrealistic_reward_amount_too_large() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let test_data: TestData = create_test_data(&e);
+    e.ledger().set_timestamp(2);
+
+    let user: Address = Address::generate(&e);
+    let vault: Address = test_data.vault_a.clone();
+    let deposit_id: u64 = 1;
+    let epoch: u32 = 1;
+    let reward_amount: u128 = u128::MAX;
+    let root: BytesN<32> = compute_leaf_hash(&e, &vault, epoch, deposit_id, &user, reward_amount);
+    let program_end_ts: u64 = 1;
+
+    seed_escrow(&test_data, 1);
+
+    let error = test_data
+        .contract
+        .try_set_rewards_root(&test_data.token_a, &vault, &epoch, &root, &reward_amount, &1u32, &program_end_ts)
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(error, ContractErrors::RewardAmountTooLarge);
 }
 
 #[test]
@@ -310,4 +391,139 @@ pub fn test_compute_root_from_proof_2() {
     let computed_root: BytesN<32> = compute_root_from_proof(&e, &computed_leaf, &proof, leaf_index);
 
     assert_eq!(expected_root, computed_root);
+}
+
+#[test]
+pub fn test_claim_more_errors() {
+    let e: Env = Env::default();
+    let test_data: TestData = create_test_data(&e);
+    e.ledger().set_timestamp(100);
+
+    let user: Address = Address::generate(&e);
+    let vault: Address = test_data.vault_a.clone();
+    let deposit_id: u64 = 1;
+    let epoch: u32 = 1;
+    let reward_amount: u128 = 50 * SCALAR_7;
+    let root: BytesN<32> = compute_leaf_hash(&e, &vault, epoch, deposit_id, &user, reward_amount);
+    let proof: Vec<BytesN<32>> = Vec::new(&e);
+    let program_end_ts: u64 = e.ledger().timestamp();
+
+    seed_escrow(&test_data, reward_amount);
+
+    test_data
+        .contract
+        .mock_all_auths()
+        .set_rewards_root(&test_data.token_a, &vault, &epoch, &root, &reward_amount, &1u32, &program_end_ts);
+
+    let mut claim = ClaimParams {
+        deposit_id,
+        amount: reward_amount,
+        leaf_index: 0,
+        proof: proof.clone(),
+    };
+
+    // Should fail if the user hasn't signed the transaction
+    assert!(test_data.contract.try_claim(&user, &vault, &epoch, &claim).is_err());
+
+    e.ledger().set_timestamp(1);
+
+    // Should fail because for some reason the timestamp is less than the program_end_ts
+    assert_eq!(
+        test_data
+            .contract
+            .mock_all_auths()
+            .try_claim(&user, &vault, &epoch, &claim)
+            .unwrap_err()
+            .unwrap(),
+        ContractErrors::RewardEpochNotMatured,
+    );
+
+    e.ledger().set_timestamp(100);
+
+    claim.leaf_index = claim.leaf_index + 1;
+
+    assert_eq!(
+        test_data
+            .contract
+            .mock_all_auths()
+            .try_claim(&user, &vault, &epoch, &claim)
+            .unwrap_err()
+            .unwrap(),
+        ContractErrors::RewardLeafIndexOutOfBounds,
+    );
+
+    claim.leaf_index = claim.leaf_index - 1;
+    claim.amount = 0;
+
+    assert_eq!(
+        test_data
+            .contract
+            .mock_all_auths()
+            .try_claim(&user, &vault, &epoch, &claim)
+            .unwrap_err()
+            .unwrap(),
+        ContractErrors::RewardInvalidProof,
+    );
+
+    claim.amount = reward_amount;
+
+    test_data
+        .token_a_tc
+        .mock_all_auths()
+        .transfer(&test_data.contract.address, &Address::generate(&e), &(reward_amount as i128));
+
+    assert_eq!(
+        test_data
+            .contract
+            .mock_all_auths()
+            .try_claim(&user, &vault, &epoch, &claim)
+            .unwrap_err()
+            .unwrap(),
+        ContractErrors::InsufficientEscrowBalance,
+    );
+}
+
+#[test]
+pub fn test_impossible_reward_amount_too_large() {
+    let e: Env = Env::default();
+    let test_data: TestData = create_test_data(&e);
+    e.ledger().set_timestamp(100);
+
+    let user: Address = Address::generate(&e);
+    let vault: Address = test_data.vault_a.clone();
+    let deposit_id: u64 = 1;
+    let epoch: u32 = 1;
+    let reward_amount: u128 = u128::MAX;
+    let root: BytesN<32> = compute_leaf_hash(&e, &vault, epoch, deposit_id, &user, reward_amount);
+    let proof: Vec<BytesN<32>> = Vec::new(&e);
+    let program_end_ts: u64 = e.ledger().timestamp();
+
+    e.as_contract(&test_data.contract.address, || {
+        let epoch_data = RewardEpoch {
+            root: root.clone(),
+            asset: test_data.token_a.clone(),
+            total_rewards: reward_amount,
+            leaf_count: 1,
+            program_end_ts,
+        };
+        put_reward_epoch(&e, &vault, epoch, &epoch_data);
+        set_latest_epoch(&e, &vault, epoch);
+    });
+
+    let claim = ClaimParams {
+        deposit_id,
+        amount: reward_amount,
+        leaf_index: 0,
+        proof: proof.clone(),
+    };
+
+    assert_eq!(
+        test_data
+            .contract
+            .mock_all_auths()
+            .try_claim(&user, &vault, &epoch, &claim)
+            .unwrap_err()
+            .unwrap(),
+        ContractErrors::RewardAmountTooLarge,
+    );
 }
