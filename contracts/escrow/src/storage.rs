@@ -5,6 +5,8 @@ const EPOCH_MIN_TTL: u32 = LEDGER_WEEK;
 const EPOCH_MAX_TTL: u32 = LEDGER_MONTH * 6;
 const CLAIM_MIN_TTL: u32 = LEDGER_WEEK;
 const CLAIM_MAX_TTL: u32 = LEDGER_MONTH * 6;
+const COMMITTED_MIN_TTL: u32 = LEDGER_WEEK;
+const COMMITTED_MAX_TTL: u32 = LEDGER_MONTH * 6;
 
 #[contracttype]
 pub enum StorageKeys {
@@ -13,6 +15,7 @@ pub enum StorageKeys {
     LatestRewardEpoch(Address),         // -> u32
     RewardEpoch((Address, u32)),        // -> RewardEpoch
     RewardClaimed((Address, u32, u64)), // -> u64 bitset word
+    CommittedRewards(Address),           // asset -> u128 total committed rewards
 }
 
 #[contracttype]
@@ -43,8 +46,26 @@ pub fn admin(e: &Env, value: Option<Address>) -> Option<Address> {
     e.storage().instance().get(&StorageKeys::Admin)
 }
 
+pub fn allowance(e: &Env, target: &Address, asset: &Address, value: Option<Allowance>) -> Option<Allowance> {
+    let key: StorageKeys = StorageKeys::Allowance((target.clone(), asset.clone()));
+
+    if let Some(v) = value {
+        e.storage().persistent().set(&key, &v);
+    }
+
+    e.storage().persistent().get(&key)
+}
+
 pub fn bump_instance(e: &Env) {
     e.storage().instance().extend_ttl(LEDGER_WEEK, LEDGER_MONTH);
+}
+
+pub fn bump_allowance(e: &Env, target: &Address, asset: &Address) {
+    e.storage().persistent().extend_ttl(
+        &StorageKeys::Allowance((target.clone(), asset.clone())),
+        LEDGER_WEEK,
+        LEDGER_MONTH * 3,
+    );
 }
 
 pub fn put_reward_epoch(e: &Env, vault: &Address, epoch: u32, value: &RewardEpoch) {
@@ -72,7 +93,7 @@ pub fn set_latest_epoch(e: &Env, vault: &Address, epoch: u32) {
     let storage = e.storage().instance();
     let key = StorageKeys::LatestRewardEpoch(vault.clone());
     storage.set(&key, &epoch);
-    storage.extend_ttl(EPOCH_MIN_TTL, EPOCH_MAX_TTL);
+    storage.extend_ttl(LEDGER_WEEK, LEDGER_MONTH);
 }
 
 pub fn is_claimed(e: &Env, vault: &Address, epoch: u32, deposit_id: u64) -> bool {
@@ -90,6 +111,30 @@ pub fn set_claimed(e: &Env, vault: &Address, epoch: u32, deposit_id: u64) {
     word |= mask;
     storage.set(&key, &word);
     storage.extend_ttl(&key, CLAIM_MIN_TTL, CLAIM_MAX_TTL);
+}
+
+pub fn get_committed_rewards(e: &Env, asset: &Address) -> u128 {
+    e.storage()
+        .persistent()
+        .get(&StorageKeys::CommittedRewards(asset.clone()))
+        .unwrap_or(0)
+}
+
+pub fn add_committed_rewards(e: &Env, asset: &Address, amount: u128) {
+    let key = StorageKeys::CommittedRewards(asset.clone());
+    let storage = e.storage().persistent();
+    let current = get_committed_rewards(e, asset);
+    storage.set(&key, &(current + amount));
+    storage.extend_ttl(&key, COMMITTED_MIN_TTL, COMMITTED_MAX_TTL);
+}
+
+pub fn reduce_committed_rewards(e: &Env, asset: &Address, amount: u128) {
+    let key = StorageKeys::CommittedRewards(asset.clone());
+    let storage = e.storage().persistent();
+    let current = get_committed_rewards(e, asset);
+    let new_amount = current.saturating_sub(amount);
+    storage.set(&key, &new_amount);
+    storage.extend_ttl(&key, COMMITTED_MIN_TTL, COMMITTED_MAX_TTL);
 }
 
 fn claim_position(deposit_id: u64) -> (u64, u64) {

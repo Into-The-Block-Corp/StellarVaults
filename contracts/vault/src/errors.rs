@@ -6,5 +6,6 @@ pub enum ContractErrors {
     VaultPaused = 100,
     NotEnoughDeposit = 101,
     WithdrawDepositAssetFailed = 102,
-    RewardAmountTooLarge = 103,
+    AmountOverflow = 103,
+    ZeroAmountDeposit = 104,
 }

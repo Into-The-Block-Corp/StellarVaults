@@ -1,7 +1,7 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{Address, Bytes, BytesN, Env};
 
-pub const REWARD_LEAF_PREFIX: &[u8] = b"reward_leaf_v1";
+pub const REWARD_LEAF_PREFIX: &[u8] = &[0x00];
 
 pub fn compute_leaf_hash(e: &Env, vault: &Address, epoch: u32, deposit_id: u64, owner: &Address, amount: u128) -> BytesN<32> {
     let mut payload = Bytes::from_slice(e, REWARD_LEAF_PREFIX);
@@ -17,14 +17,15 @@ pub fn compute_root_from_proof(e: &Env, leaf: &BytesN<32>, proof: &soroban_sdk::
         let sibling_bytes = sibling.to_array();
         let current_bytes = hash.to_array();
 
-        let mut data = [0u8; 64];
+        let mut data = [0u8; 65];
+        data[0] = 0x01;
 
         if index % 2 == 0 {
-            data[..32].copy_from_slice(&current_bytes);
-            data[32..].copy_from_slice(&sibling_bytes);
+            data[1..33].copy_from_slice(&current_bytes);
+            data[33..65].copy_from_slice(&sibling_bytes);
         } else {
-            data[..32].copy_from_slice(&sibling_bytes);
-            data[32..].copy_from_slice(&current_bytes);
+            data[1..33].copy_from_slice(&sibling_bytes);
+            data[33..65].copy_from_slice(&current_bytes);
         }
 
         let buffer = Bytes::from_slice(e, &data);

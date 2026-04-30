@@ -20,3 +20,8 @@ pub struct RewardClaimedEvent {
     pub asset: Address,
     pub amount: u128,
 }
+
+#[contractevent(topics = ["CONTRACT", "admin"])]
+pub struct ContractAdminEvent {
+    pub address: Address,
+}

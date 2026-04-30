@@ -1,12 +1,13 @@
 use crate::errors::ContractErrors;
-use crate::events::{RewardClaimedEvent, RewardRootUpdatedEvent};
+use crate::events::{ContractAdminEvent, RewardClaimedEvent, RewardRootUpdatedEvent};
 use crate::rewards::{compute_leaf_hash, compute_root_from_proof};
 use crate::storage::{
-    admin, bump_instance, bump_reward_epoch, get_latest_epoch, get_reward_epoch, is_claimed, put_reward_epoch, set_claimed,
-    set_latest_epoch, RewardEpoch,
+    add_committed_rewards, admin, bump_instance, bump_reward_epoch, get_committed_rewards,
+    get_latest_epoch, get_reward_epoch, is_claimed, put_reward_epoch, reduce_committed_rewards,
+    set_claimed, set_latest_epoch, RewardEpoch,
 };
 use core::convert::TryFrom;
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, panic_with_error, token, Address, BytesN, Env, Vec};
 
 #[derive(Clone)]
 #[contracttype]
@@ -24,6 +25,9 @@ pub trait EscrowContractTrait {
 
     /// This method allows upgrading the contract to a different WASM
     fn upgrade(e: Env, hash: BytesN<32>);
+
+    /// This method sets the admin of the escrow contract.
+    fn update_admin(e: Env, new_admin: Address);
 
     /// This method can be called by the contract admin to withdraw funds from the contract
     ///
@@ -48,6 +52,9 @@ pub trait EscrowContractTrait {
 
     /// Reads the stored reward epoch metadata (root, totals, program end, asset) for a vault.
     fn get_reward_epoch(e: Env, vault: Address, epoch: u32) -> Option<RewardEpoch>;
+
+    /// Recover funds from an expired epoch whose storage has been reclaimed.
+    fn sweep_expired_epoch(e: Env, asset: Address, vault: Address, epoch: u32, amount: u128) -> Result<(), ContractErrors>;
 }
 
 #[contract]
@@ -66,17 +73,28 @@ impl EscrowContractTrait for EscrowContract {
         bump_instance(&e);
     }
 
+    fn update_admin(e: Env, new_admin: Address) {
+        if let Some(v) = admin(&e, None) {
+            v.require_auth();
+        }
+        admin(&e, Some(new_admin.clone()));
+        bump_instance(&e);
+        ContractAdminEvent { address: new_admin }.publish(&e);
+    }
+
     fn withdraw(e: Env, actions: Vec<(Address, u128)>) {
         let admin: Address = admin(&e, None).unwrap();
         admin.require_auth();
         for (asset, amount) in actions {
             let client: token::TokenClient = token::TokenClient::new(&e, &asset);
             let balance: i128 = client.balance(&e.current_contract_address());
-            client.transfer(
-                &e.current_contract_address(),
-                &admin,
-                &(balance - i128::try_from(amount).map_err(|_| ContractErrors::RewardAmountTooLarge).unwrap()),
-            );
+            let amount_i128 = i128::try_from(amount)
+                .unwrap_or_else(|_| panic_with_error!(e, ContractErrors::WithdrawAmountTooLarge));
+            let transfer_amount = balance - amount_i128;
+            if transfer_amount <= 0 {
+                continue;
+            }
+            client.transfer(&e.current_contract_address(), &admin, &transfer_amount);
         }
         bump_instance(&e);
     }
@@ -111,9 +129,13 @@ impl EscrowContractTrait for EscrowContract {
         let token_client = token::TokenClient::new(&e, &asset);
         let contract_balance = token_client.balance(&e.current_contract_address());
 
-        if contract_balance < amount_i128 {
+        let committed = get_committed_rewards(&e, &asset);
+        let committed_i128 = i128::try_from(committed).map_err(|_| ContractErrors::RewardAmountTooLarge)?;
+        if contract_balance < committed_i128 + amount_i128 {
             return Err(ContractErrors::InsufficientEscrowBalance);
         }
+
+        add_committed_rewards(&e, &asset, total_rewards);
 
         let epoch_data = RewardEpoch {
             root: root.clone(),
@@ -187,6 +209,7 @@ impl EscrowContractTrait for EscrowContract {
         }
 
         token_client.transfer(&contract_address, &from, &amount_i128);
+        reduce_committed_rewards(&e, &epoch_data.asset, amount);
         set_claimed(&e, &vault, epoch, deposit_id);
 
         RewardClaimedEvent {
@@ -207,5 +230,38 @@ impl EscrowContractTrait for EscrowContract {
 
     fn get_reward_epoch(e: Env, vault: Address, epoch: u32) -> Option<RewardEpoch> {
         get_reward_epoch(&e, &vault, epoch)
+    }
+
+    fn sweep_expired_epoch(e: Env, asset: Address, vault: Address, epoch: u32, amount: u128) -> Result<(), ContractErrors> {
+        let admin_addr = admin(&e, None).unwrap();
+        admin_addr.require_auth();
+
+        // Only allow sweep if the epoch data has expired (no longer in storage)
+        if get_reward_epoch(&e, &vault, epoch).is_some() {
+            return Err(ContractErrors::RewardEpochNotExpired);
+        }
+
+        // Prove the epoch actually existed at some point: it must be at or
+        // before the latest published epoch for this vault. Without this,
+        // any fabricated or future (vault, epoch) pair would pass the
+        // is_none() check above.
+        let latest = get_latest_epoch(&e, &vault).ok_or(ContractErrors::RewardEpochNotFound)?;
+        if epoch > latest {
+            return Err(ContractErrors::RewardEpochNotFound);
+        }
+
+        let amount_i128 = i128::try_from(amount).map_err(|_| ContractErrors::RewardAmountTooLarge)?;
+        let token_client = token::TokenClient::new(&e, &asset);
+        let balance = token_client.balance(&e.current_contract_address());
+
+        if balance < amount_i128 {
+            return Err(ContractErrors::InsufficientEscrowBalance);
+        }
+
+        token_client.transfer(&e.current_contract_address(), &admin_addr, &amount_i128);
+        reduce_committed_rewards(&e, &asset, amount);
+        bump_instance(&e);
+
+        Ok(())
     }
 }

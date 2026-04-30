@@ -14,4 +14,6 @@ pub enum ContractErrors {
     RewardLeafIndexOutOfBounds = 306,
     RewardAmountTooLarge = 307,
     InsufficientEscrowBalance = 308,
+    WithdrawAmountTooLarge = 309,
+    RewardEpochNotExpired = 310,
 }

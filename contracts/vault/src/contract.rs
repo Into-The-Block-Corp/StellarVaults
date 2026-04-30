@@ -1,16 +1,16 @@
 use crate::deposit::handle_deposit;
 use crate::errors::ContractErrors;
 use crate::events::{ContractAdminEvent, ContractStatusEvent, WithdrawEvent};
-use crate::storage::core::{admin, bump_instance, deposit_asset, paused};
+use crate::storage::core::{admin, bump_instance, deposit_asset, escrow, paused};
 use crate::storage::deposit_state::{deposit, reduce_total_principal, DepositRecord};
 use crate::utils::withdraw_deposit_asset;
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, BytesN, Env, String};
 
 pub trait VaultContractTrait {
     /// arguments:
     /// * new_admin: The admin of the contract
     /// * new_deposit_asset: The asset users will deposit into the vault
-    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address);
+    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address, new_escrow: Address);
 
     // ---------------------------------------
     // ------------ Admin methods ------------
@@ -23,7 +23,7 @@ pub trait VaultContractTrait {
     /// The new admin doesn't need to sign the transaction, only the current admin.
     fn update_admin(e: Env, new_admin: Address);
 
-    /// This pauses/unpauses the deposits.
+    /// This pauses/unpauses the deposits and withdrawals.
     fn set_status(e: Env, new_status: bool);
 
     /// Deposits assets into the vault on behalf of `from`, returning the new deposit identifier.
@@ -31,6 +31,11 @@ pub trait VaultContractTrait {
     fn deposit(e: Env, from: Address, amount: u128, referral_id: Option<String>) -> u64;
 
     /// Withdraws the funds from the user's deposits
+    ///
+    /// # Returns
+    /// A vector with tuples with the structure:
+    /// * Deposit ID
+    /// * Deposit asset withdrew
     fn withdraw(e: Env, from: Address, amount: u128) -> Result<(), ContractErrors>;
 }
 
@@ -39,9 +44,10 @@ pub struct VaultContract;
 
 #[contractimpl]
 impl VaultContractTrait for VaultContract {
-    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address) {
+    fn __constructor(e: Env, new_admin: Address, new_deposit_asset: Address, new_escrow: Address) {
         admin(&e, Some(new_admin));
         deposit_asset(&e, Some(new_deposit_asset));
+        escrow(&e, Some(new_escrow));
         paused(&e, Some(false));
     }
 
@@ -72,6 +78,10 @@ impl VaultContractTrait for VaultContract {
     }
 
     fn withdraw(e: Env, from: Address, amount: u128) -> Result<(), ContractErrors> {
+        if paused(&e, None).unwrap_or(false) {
+            panic_with_error!(e, ContractErrors::VaultPaused);
+        }
+
         from.require_auth();
 
         let mut saved_deposit: DepositRecord = deposit(&e, &from, None, false).unwrap_or(DepositRecord {

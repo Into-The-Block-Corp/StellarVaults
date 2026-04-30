@@ -34,7 +34,11 @@ pub fn deposit(e: &Env, owner: &Address, value: Option<DepositRecord>, remove: b
         e.storage().persistent().remove(&key);
     }
 
-    e.storage().persistent().get(&key)
+    let result = e.storage().persistent().get(&key);
+    if result.is_some() {
+        e.storage().persistent().extend_ttl(&key, LEDGER_WEEK, LEDGER_MONTH);
+    }
+    result
 }
 
 /// Adds `amount` to the running total principal locked in the vault and returns the updated sum.
@@ -48,7 +52,10 @@ pub fn add_total_principal(e: &Env, amount: u128) -> u128 {
 /// Reduces the `amount` from the total principal locked in the vault and returns the updated sum.
 pub fn reduce_total_principal(e: &Env, amount: &u128) -> u128 {
     let current: u128 = e.storage().instance().get(&DepositStorageKey::TotalPrincipal).unwrap_or(0);
-    let updated: u128 = current - amount.clone(); // This must throw if we try to reduce it more than we have recorded
+    if *amount > current {
+        panic!("reduce_total_principal: underflow — withdrawing {} but only {} recorded", amount, current);
+    }
+    let updated: u128 = current - amount;
     e.storage().instance().set(&DepositStorageKey::TotalPrincipal, &updated);
     updated
 }
