@@ -11,21 +11,10 @@ const COMMITTED_MAX_TTL: u32 = LEDGER_MONTH * 6;
 #[contracttype]
 pub enum StorageKeys {
     Admin,                              // --> Address
-    Allowance((Address, Address)),      // -> Allowance
     LatestRewardEpoch(Address),         // -> u32
     RewardEpoch((Address, u32)),        // -> RewardEpoch
     RewardClaimed((Address, u32, u64)), // -> u64 bitset word
     CommittedRewards(Address),           // asset -> u128 total committed rewards
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialOrd, PartialEq)]
-pub struct Allowance {
-    pub target: Address,
-    pub asset: Address,
-    pub amount: u128,
-    pub current: u128,
-    pub deadline: u64,
 }
 
 #[contracttype]
@@ -46,26 +35,8 @@ pub fn admin(e: &Env, value: Option<Address>) -> Option<Address> {
     e.storage().instance().get(&StorageKeys::Admin)
 }
 
-pub fn allowance(e: &Env, target: &Address, asset: &Address, value: Option<Allowance>) -> Option<Allowance> {
-    let key: StorageKeys = StorageKeys::Allowance((target.clone(), asset.clone()));
-
-    if let Some(v) = value {
-        e.storage().persistent().set(&key, &v);
-    }
-
-    e.storage().persistent().get(&key)
-}
-
 pub fn bump_instance(e: &Env) {
     e.storage().instance().extend_ttl(LEDGER_WEEK, LEDGER_MONTH);
-}
-
-pub fn bump_allowance(e: &Env, target: &Address, asset: &Address) {
-    e.storage().persistent().extend_ttl(
-        &StorageKeys::Allowance((target.clone(), asset.clone())),
-        LEDGER_WEEK,
-        LEDGER_MONTH * 3,
-    );
 }
 
 pub fn put_reward_epoch(e: &Env, vault: &Address, epoch: u32, value: &RewardEpoch) {
