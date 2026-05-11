@@ -258,6 +258,10 @@ impl EscrowContractTrait for EscrowContract {
             return Err(ContractErrors::InsufficientEscrowBalance);
         }
 
+        if get_committed_rewards(&e, &asset) < amount {
+            return Err(ContractErrors::SweepAmountExceedsCommittedRewards);
+        }
+
         token_client.transfer(&e.current_contract_address(), &admin_addr, &amount_i128);
         reduce_committed_rewards(&e, &asset, amount);
         bump_instance(&e);

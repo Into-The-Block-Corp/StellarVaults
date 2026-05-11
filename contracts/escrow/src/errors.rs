@@ -16,4 +16,5 @@ pub enum ContractErrors {
     InsufficientEscrowBalance = 308,
     WithdrawAmountTooLarge = 309,
     RewardEpochNotExpired = 310,
+    SweepAmountExceedsCommittedRewards = 311,
 }
