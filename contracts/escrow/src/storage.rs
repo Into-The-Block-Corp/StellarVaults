@@ -64,7 +64,7 @@ pub fn set_latest_epoch(e: &Env, vault: &Address, epoch: u32) {
     let storage = e.storage().instance();
     let key = StorageKeys::LatestRewardEpoch(vault.clone());
     storage.set(&key, &epoch);
-    storage.extend_ttl(LEDGER_WEEK, LEDGER_MONTH);
+    storage.extend_ttl(EPOCH_MIN_TTL, EPOCH_MAX_TTL);
 }
 
 pub fn is_claimed(e: &Env, vault: &Address, epoch: u32, deposit_id: u64) -> bool {
