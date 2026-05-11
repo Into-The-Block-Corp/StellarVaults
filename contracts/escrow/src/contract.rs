@@ -1,5 +1,8 @@
 use crate::errors::ContractErrors;
-use crate::events::{ContractAdminEvent, RewardClaimedEvent, RewardRootUpdatedEvent};
+use crate::events::{
+    AdminWithdrawEvent, ContractAdminEvent, RewardClaimedEvent, RewardRootUpdatedEvent,
+    SweepExpiredEpochEvent,
+};
 use crate::rewards::{compute_leaf_hash, compute_root_from_proof};
 use crate::storage::{
     add_committed_rewards, admin, bump_instance, bump_reward_epoch, get_committed_rewards,
@@ -93,6 +96,12 @@ impl EscrowContractTrait for EscrowContract {
                 continue;
             }
             client.transfer(&e.current_contract_address(), &admin, &transfer_amount);
+            AdminWithdrawEvent {
+                asset,
+                admin: admin.clone(),
+                amount: transfer_amount as u128,
+            }
+            .publish(&e);
         }
         bump_instance(&e);
     }
@@ -262,6 +271,16 @@ impl EscrowContractTrait for EscrowContract {
 
         token_client.transfer(&e.current_contract_address(), &admin_addr, &amount_i128);
         reduce_committed_rewards(&e, &asset, amount);
+
+        SweepExpiredEpochEvent {
+            asset,
+            vault,
+            epoch,
+            admin: admin_addr,
+            amount,
+        }
+        .publish(&e);
+
         bump_instance(&e);
 
         Ok(())

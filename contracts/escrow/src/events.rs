@@ -25,3 +25,19 @@ pub struct RewardClaimedEvent {
 pub struct ContractAdminEvent {
     pub address: Address,
 }
+
+#[contractevent(topics = ["ADMIN", "withdraw"])]
+pub struct AdminWithdrawEvent {
+    pub asset: Address,
+    pub admin: Address,
+    pub amount: u128,
+}
+
+#[contractevent(topics = ["SWEEP", "epoch"])]
+pub struct SweepExpiredEpochEvent {
+    pub asset: Address,
+    pub vault: Address,
+    pub epoch: u32,
+    pub admin: Address,
+    pub amount: u128,
+}
