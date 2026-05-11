@@ -74,9 +74,7 @@ impl EscrowContractTrait for EscrowContract {
     }
 
     fn update_admin(e: Env, new_admin: Address) {
-        if let Some(v) = admin(&e, None) {
-            v.require_auth();
-        }
+        admin(&e, None).unwrap().require_auth();
         admin(&e, Some(new_admin.clone()));
         bump_instance(&e);
         ContractAdminEvent { address: new_admin }.publish(&e);
