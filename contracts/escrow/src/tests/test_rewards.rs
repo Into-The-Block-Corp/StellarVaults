@@ -2,14 +2,14 @@
 
 extern crate alloc;
 
-use crate::constants::SCALAR_7;
+use crate::constants::{SCALAR_7, UNCLAIMED_REWARD_RETENTION_SECONDS};
 use crate::contract::ClaimParams;
 use crate::errors::ContractErrors;
 use crate::rewards::compute_leaf_hash;
-use crate::storage::{add_committed_rewards, get_committed_rewards, get_reward_epoch, is_claimed, set_latest_epoch};
+use crate::storage::{get_committed_rewards, get_reward_epoch, is_claimed};
 use crate::tests::test_utils::{create_test_data, TestData};
 use alloc::vec::Vec as StdVec;
-use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::{symbol_short, Address, BytesN, Env, Map, Symbol, TryFromVal, Vec};
 
 fn seed_escrow(test_data: &TestData, amount: u128) {
@@ -17,6 +17,28 @@ fn seed_escrow(test_data: &TestData, amount: u128) {
         .token_a_sac
         .mock_all_auths()
         .mint(&test_data.contract.address, &(amount as i128));
+}
+
+fn seed_epoch(test_data: &TestData, e: &Env, vault: &Address, epoch: u32, total_rewards: u128) {
+    seed_escrow(test_data, total_rewards);
+    let dummy_root: BytesN<32> = BytesN::from_array(e, &[0u8; 32]);
+    let program_end_ts = e.ledger().timestamp();
+    test_data.contract.mock_all_auths().set_rewards_root(
+        &test_data.token_a,
+        vault,
+        &epoch,
+        &dummy_root,
+        &total_rewards,
+        &1u32,
+        &program_end_ts,
+    );
+}
+
+fn fast_forward_past_retention(e: &Env) {
+    let now = e.ledger().timestamp();
+    e.ledger().with_mut(|li| {
+        li.timestamp = now + UNCLAIMED_REWARD_RETENTION_SECONDS + 1;
+    });
 }
 
 #[test]
@@ -168,15 +190,10 @@ fn test_sweep_expired_epoch_fails_when_amount_exceeds_committed_rewards() {
     let committed: u128 = 100 * SCALAR_7;
     let sweep_amount: u128 = committed + 1;
 
-    // Seed enough balance so the balance check passes; failure must come from the committed-rewards check.
-    seed_escrow(&test_data, committed * 2);
-
-    // Simulate an expired persistent epoch entry: latest_epoch and committed_rewards exist,
-    // but the persistent RewardEpoch entry does not.
-    e.as_contract(&test_data.contract.address, || {
-        set_latest_epoch(&e, &vault, epoch);
-        add_committed_rewards(&e, &test_data.token_a, committed);
-    });
+    seed_epoch(&test_data, &e, &vault, epoch, committed);
+    // Top up balance so the over-asked amount clears the balance check and trips the committed bound.
+    seed_escrow(&test_data, committed);
+    fast_forward_past_retention(&e);
 
     let result = test_data
         .contract
@@ -201,12 +218,8 @@ fn test_sweep_expired_epoch_succeeds_when_amount_within_committed_rewards() {
     let committed: u128 = 100 * SCALAR_7;
     let sweep_amount: u128 = committed;
 
-    seed_escrow(&test_data, committed);
-
-    e.as_contract(&test_data.contract.address, || {
-        set_latest_epoch(&e, &vault, epoch);
-        add_committed_rewards(&e, &test_data.token_a, committed);
-    });
+    seed_epoch(&test_data, &e, &vault, epoch, committed);
+    fast_forward_past_retention(&e);
 
     test_data
         .contract
@@ -223,6 +236,54 @@ fn test_sweep_expired_epoch_succeeds_when_amount_within_committed_rewards() {
 }
 
 #[test]
+fn test_sweep_expired_epoch_fails_when_retention_period_active() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let test_data = create_test_data(&e);
+
+    let vault = test_data.vault_a.clone();
+    let epoch: u32 = 1;
+    let committed: u128 = 100 * SCALAR_7;
+
+    seed_epoch(&test_data, &e, &vault, epoch, committed);
+    // Do NOT fast-forward — retention period is still active.
+
+    let result = test_data
+        .contract
+        .mock_all_auths()
+        .try_sweep_expired_epoch(&test_data.token_a, &vault, &epoch, &committed);
+
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        ContractErrors::RewardRetentionPeriodActive
+    );
+    assert_eq!(test_data.token_a_tc.balance(&test_data.admin), 0);
+}
+
+#[test]
+fn test_sweep_expired_epoch_fails_when_asset_mismatch() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let test_data = create_test_data(&e);
+
+    let vault = test_data.vault_a.clone();
+    let epoch: u32 = 1;
+    let committed: u128 = 100 * SCALAR_7;
+
+    seed_epoch(&test_data, &e, &vault, epoch, committed);
+    fast_forward_past_retention(&e);
+
+    let result = test_data
+        .contract
+        .mock_all_auths()
+        .try_sweep_expired_epoch(&test_data.token_b, &vault, &epoch, &committed);
+
+    assert_eq!(result.unwrap_err().unwrap(), ContractErrors::SweepAssetMismatch);
+    assert_eq!(test_data.token_a_tc.balance(&test_data.admin), 0);
+    assert_eq!(test_data.token_b_tc.balance(&test_data.admin), 0);
+}
+
+#[test]
 fn test_sweep_expired_epoch_emits_event() {
     let e = Env::default();
     e.mock_all_auths();
@@ -233,14 +294,10 @@ fn test_sweep_expired_epoch_emits_event() {
     let committed: u128 = 100 * SCALAR_7;
     let sweep_amount: u128 = committed;
 
-    seed_escrow(&test_data, committed);
+    seed_epoch(&test_data, &e, &vault, epoch, committed);
+    fast_forward_past_retention(&e);
 
-    e.as_contract(&test_data.contract.address, || {
-        set_latest_epoch(&e, &vault, epoch);
-        add_committed_rewards(&e, &test_data.token_a, committed);
-    });
-
-    // Drain prior events (e.g. mints) so we only inspect the sweep.
+    // Drain prior events (e.g. mints, set_rewards_root) so we only inspect the sweep.
     let _ = e.events().all();
 
     test_data

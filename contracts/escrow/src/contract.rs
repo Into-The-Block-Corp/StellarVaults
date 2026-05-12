@@ -1,3 +1,4 @@
+use crate::constants::UNCLAIMED_REWARD_RETENTION_SECONDS;
 use crate::errors::ContractErrors;
 use crate::events::{
     AdminWithdrawEvent, ContractAdminEvent, RewardClaimedEvent, RewardRootUpdatedEvent,
@@ -243,18 +244,14 @@ impl EscrowContractTrait for EscrowContract {
         let admin_addr = admin(&e, None).unwrap();
         admin_addr.require_auth();
 
-        // Only allow sweep if the epoch data has expired (no longer in storage)
-        if get_reward_epoch(&e, &vault, epoch).is_some() {
-            return Err(ContractErrors::RewardEpochNotExpired);
+        let epoch_data = get_reward_epoch(&e, &vault, epoch).ok_or(ContractErrors::RewardEpochNotFound)?;
+
+        if epoch_data.asset != asset {
+            return Err(ContractErrors::SweepAssetMismatch);
         }
 
-        // Prove the epoch actually existed at some point: it must be at or
-        // before the latest published epoch for this vault. Without this,
-        // any fabricated or future (vault, epoch) pair would pass the
-        // is_none() check above.
-        let latest = get_latest_epoch(&e, &vault).ok_or(ContractErrors::RewardEpochNotFound)?;
-        if epoch > latest {
-            return Err(ContractErrors::RewardEpochNotFound);
+        if e.ledger().timestamp() < epoch_data.program_end_ts.saturating_add(UNCLAIMED_REWARD_RETENTION_SECONDS) {
+            return Err(ContractErrors::RewardRetentionPeriodActive);
         }
 
         let amount_i128 = i128::try_from(amount).map_err(|_| ContractErrors::RewardAmountTooLarge)?;
