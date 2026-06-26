@@ -1,0 +1,91 @@
+name: Build and Release Contracts
+
+on:
+  push:
+    # 1️⃣ Create a release whenever a new tag like `v0.0.0` is pushed.
+    tags:
+      - "v*"
+
+  # 2️⃣ Create a release manually from GitHub's user interface.
+  workflow_dispatch:
+    inputs:
+      release_name:
+        description: "Release Version (e.g. v0.0.0)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3️⃣ Set up env vars that will be used in the workflow.
+      - name: Resolve release tag
+        run: |
+          if [ -n "${{ github.event.inputs.release_name }}" ]; then
+            echo "TAG_NAME=${{ github.event.inputs.release_name }}" >> "$GITHUB_ENV"
+          else
+            echo "TAG_NAME=${{ github.ref_name }}" >> "$GITHUB_ENV"
+          fi
+
+      # 4️⃣ Set up the Stellar CLI.
+      - name: Install stellar-cli
+        uses: stellar/stellar-cli@v26.0.0
+
+      # 5️⃣ Build the contract and mark the WASM with the current repository.
+      - name: Build, embed metadata, and optimize
+        run: |
+          set -euo pipefail
+          for pkg in vault escrow; do
+            stellar contract build \
+              --package "$pkg" \
+              --optimize \
+              --meta source_repo=github:${{ github.repository }}
+          done
+
+      # 7️⃣ Build the attestation for the wasm file.
+      - name: Attest vault WASM
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: vault.wasm
+          subject-path: target/wasm32v1-none/release/vault.wasm
+
+      # 7️⃣ Build the attestation for the wasm file.
+      - name: Attest escrow WASM
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: escrow.wasm
+          subject-path: target/wasm32v1-none/release/escrow.wasm
+
+      # 8️⃣ Make a new release.
+      # 9️⃣ Upload the wasm file to the release.
+      - name: Create release and upload WASM assets
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const { data: release } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.TAG_NAME,
+              target_commitish: context.sha,
+              make_latest: 'true',
+            });
+
+            for (const pkg of ['vault', 'escrow']) {
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id,
+                name: `${pkg}.wasm`,
+                data: fs.readFileSync(`target/wasm32v1-none/release/${pkg}.wasm`),
+              });
+            }
